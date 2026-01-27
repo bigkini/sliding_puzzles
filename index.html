@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sliding Puzzle: Smart Navigation</title>
+    <style>
+        :root {
+            --bg-color: #f8fafc;
+            --tile-color: #ffffff;
+            --tile-text: #1e293b;
+            --empty-color: #cbd5e1;
+            --accent-color: #3b82f6;
+            --solve-color: #f59e0b;
+            --primary-highlight: #4EA3AC;
+            --secondary-highlight: #AAF1ED;
+            --success-color: #10b981;
+            --next-color: #8b5cf6;
+            --board-bg: #475569;
+        }
+
+        body {
+            font-family: 'Pretendard', -apple-system, sans-serif;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 100vh; margin: 0; background-color: var(--bg-color);
+            overflow: hidden; touch-action: none;
+        }
+
+        .header { text-align: center; margin-bottom: 10px; }
+        h1 { color: #0f172a; margin: 5px 0; font-size: 1.6rem; font-weight: 800; }
+        .status-bar { font-size: 1rem; font-weight: bold; color: var(--accent-color); margin-bottom: 15px; }
+
+        .controls { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; justify-content: center; }
+        select, button {
+            padding: 10px 18px; font-size: 14px; border-radius: 8px; border: 1px solid #e2e8f0;
+            background: white; cursor: pointer; font-weight: 700; transition: all 0.2s;
+        }
+        
+        #btn-shuffle { background-color: var(--accent-color); color: white; border: none; }
+        #btn-solve { background-color: var(--solve-color); color: white; border: none; }
+        button:disabled { background-color: #94a3b8; cursor: not-allowed; opacity: 0.7; }
+
+        #puzzle-container { position: relative; }
+        #puzzle-board {
+            display: grid; gap: 4px; background-color: var(--board-bg); padding: 6px;
+            border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            width: 90vw; max-width: 460px; aspect-ratio: 1 / 1;
+        }
+
+        .tile {
+            display: flex; align-items: center; justify-content: center;
+            background-color: var(--tile-color); color: var(--tile-text);
+            border-radius: 6px; cursor: pointer; user-select: none;
+            box-shadow: inset 0 -2px 0 rgba(0,0,0,0.05);
+            transition: background-color 0.2s;
+        }
+        .tile.empty { background-color: var(--empty-color); box-shadow: none; cursor: default; }
+        
+        .tile.highlight-primary { background-color: var(--primary-highlight); color: #ffffff; }
+        .tile.highlight-secondary { background-color: var(--secondary-highlight); color: #1e293b; }
+
+        #victory-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.95); display: none;
+            flex-direction: column; align-items: center; justify-content: center;
+            border-radius: 12px; z-index: 20; backdrop-filter: blur(5px);
+        }
+        
+        .victory-text { font-size: 1.5rem; color: var(--success-color); font-weight: 800; margin-bottom: 25px; text-align: center; }
+        .victory-buttons { display: flex; gap: 15px; }
+        
+        .btn-overlay { 
+            font-size: 1rem; padding: 12px 24px; border-radius: 10px; border: 4px solid transparent; 
+            color: white !important; font-weight: 800; transition: all 0.2s;
+        }
+        .btn-overlay.focused { border-color: #1e293b; transform: scale(1.1); box-shadow: 0 0 15px rgba(0,0,0,0.2); }
+        .btn-next { background-color: var(--next-color); }
+        .btn-replay { background-color: var(--success-color); }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>Sliding Puzzle</h1>
+        <div id="status" class="status-bar">Level: 2 x 2</div>
+    </div>
+
+    <div class="controls">
+        <select id="size-select"></select>
+        <button id="btn-shuffle">새로 섞기</button>
+        <button id="btn-solve">자동 풀기</button>
+    </div>
+
+    <div id="puzzle-container">
+        <div id="puzzle-board"></div>
+        <div id="victory-overlay">
+            <div class="victory-text" id="victory-msg">🎉 Clear!</div>
+            <div class="victory-buttons">
+                <button class="btn-overlay btn-replay" id="overlay-replay">다시하기</button>
+                <button class="btn-overlay btn-next" id="overlay-next">다음 레벨</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let size = 2;
+        let tiles = [];
+        let moveHistory = [];
+        let isGameActive = false;
+        let isSolving = false;
+        let currentTarget = 1;
+        let eligibleSecondary = []; 
+        let overlayFocusIndex = 1;
+        const MAX_SIZE = 13;
+
+        const board = document.getElementById('puzzle-board');
+        const select = document.getElementById('size-select');
+        const status = document.getElementById('status');
+        const overlay = document.getElementById('victory-overlay');
+        const btnShuffle = document.getElementById('btn-shuffle');
+        const btnSolve = document.getElementById('btn-solve');
+        const btnReplay = document.getElementById('overlay-replay');
+        const btnNext = document.getElementById('overlay-next');
+
+        for (let i = 2; i <= MAX_SIZE; i++) {
+            const opt = document.createElement('option');
+            opt.value = i; opt.innerText = `${i} x ${i}`;
+            select.appendChild(opt);
+        }
+
+        function updateTargets() {
+            if (!isGameActive || isSolving) return;
+            
+            while (currentTarget < size * size && tiles[currentTarget - 1] === currentTarget) {
+                currentTarget++;
+            }
+
+            for (let num = currentTarget + 1; num < size * size; num++) {
+                if (eligibleSecondary[num]) continue;
+
+                const homeIdx = num - 1;
+                const row = Math.floor(homeIdx / size);
+                const col = homeIdx % size;
+
+                const leftOk = (col === 0) || (tiles[homeIdx - 1] === num - 1);
+                const topOk = (row === 0) || (tiles[homeIdx - size] === num - size);
+
+                if (leftOk && topOk) {
+                    eligibleSecondary[num] = true;
+                }
+            }
+        }
+
+        function render() {
+            board.innerHTML = '';
+            board.style.gridTemplateColumns = `repeat(${size}, 1fr)`;
+            const fontSize = Math.max(12, Math.min(32, 460 / size / 2.4));
+
+            tiles.forEach((num, idx) => {
+                const div = document.createElement('div');
+                let hClass = '';
+
+                if (num === currentTarget && num !== 0) {
+                    hClass = ' highlight-primary';
+                } 
+                else if (num !== 0 && eligibleSecondary[num]) {
+                    if (tiles[num - 1] !== num) {
+                        hClass = ' highlight-secondary';
+                    }
+                }
+
+                div.className = 'tile' + (num === 0 ? ' empty' : '') + hClass;
+                div.style.fontSize = `${fontSize}px`;
+                div.innerText = num === 0 ? '' : num;
+                if (num !== 0) div.onclick = () => { if (isGameActive && !isSolving) handleMove(idx); };
+                board.appendChild(div);
+            });
+        }
+
+        function handleMove(targetIdx, record = true) {
+            const emptyIdx = tiles.indexOf(0);
+            const tr = Math.floor(targetIdx / size), tc = targetIdx % size;
+            const er = Math.floor(emptyIdx / size), ec = emptyIdx % size;
+            if (tr !== er && tc !== ec) return;
+            const isRow = (tr === er);
+            const diff = isRow ? ec - tc : er - tr;
+            const step = Math.abs(diff);
+            const dir = diff > 0 ? (isRow ? 1 : size) : (isRow ? -1 : -size);
+            for (let i = 0; i < step; i++) {
+                const curE = tiles.indexOf(0);
+                const nT = curE - dir;
+                if (record) moveHistory.push(curE);
+                [tiles[curE], tiles[nT]] = [tiles[nT], tiles[curE]];
+            }
+            updateTargets();
+            render();
+            checkWin();
+        }
+
+        function shuffle() {
+            isGameActive = false;
+            tiles = Array.from({ length: size * size }, (_, i) => (i + 1) % (size * size));
+            moveHistory = [];
+            currentTarget = 1;
+            eligibleSecondary = new Array(size * size + 1).fill(false);
+
+            const shuffleCount = Math.pow(size, 3) * 1.5;
+            for (let i = 0; i < shuffleCount; i++) {
+                const eIdx = tiles.indexOf(0);
+                const r = Math.floor(eIdx / size), c = eIdx % size;
+                const moves = [];
+                if (r > 0) moves.push(eIdx - size); if (r < size - 1) moves.push(eIdx + size);
+                if (c > 0) moves.push(eIdx - 1); if (c < size - 1) moves.push(eIdx + 1);
+                const move = moves[Math.floor(Math.random() * moves.length)];
+                [tiles[eIdx], tiles[move]] = [tiles[move], tiles[eIdx]];
+                moveHistory.push(eIdx);
+            }
+            isGameActive = true;
+            updateTargets();
+            overlay.style.display = 'none';
+            status.innerText = `Level: ${size} x ${size}`;
+            render();
+        }
+
+        function checkWin() {
+            const isWin = tiles.every((num, i) => num === (i + 1) % (size * size));
+            if (isWin && isGameActive) {
+                isGameActive = false;
+                document.getElementById('victory-msg').innerText = `🎉 ${size}x${size} Clear!`;
+                const hasNext = size < MAX_SIZE;
+                btnNext.style.display = hasNext ? 'block' : 'none';
+                overlayFocusIndex = hasNext ? 1 : 0;
+                overlay.style.display = 'flex';
+                updateOverlayFocus();
+                render();
+            }
+        }
+
+        function updateOverlayFocus() {
+            btnReplay.classList.toggle('focused', overlayFocusIndex === 0);
+            btnNext.classList.toggle('focused', overlayFocusIndex === 1);
+        }
+
+        async function solve() {
+            if (!isGameActive || isSolving || moveHistory.length === 0) return;
+            isSolving = true;
+            btnSolve.disabled = btnShuffle.disabled = select.disabled = true;
+            while (moveHistory.length > 0) {
+                const pE = moveHistory.pop();
+                const cE = tiles.indexOf(0);
+                [tiles[cE], tiles[pE]] = [tiles[pE], tiles[cE]];
+                render();
+                await new Promise(r => setTimeout(r, size > 8 ? 10 : 40));
+            }
+            isSolving = false;
+            btnSolve.disabled = btnShuffle.disabled = select.disabled = false;
+            checkWin();
+        }
+
+        select.onchange = (e) => { size = parseInt(e.target.value); shuffle(); };
+        btnShuffle.onclick = shuffle;
+        btnSolve.onclick = solve;
+        btnReplay.onclick = shuffle;
+        btnNext.onclick = () => { if (size < MAX_SIZE) { size++; select.value = size; shuffle(); } };
+
+        document.onkeydown = (e) => {
+            if (overlay.style.display === 'flex') {
+                if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                    if (size < MAX_SIZE) {
+                        overlayFocusIndex = 1 - overlayFocusIndex;
+                        updateOverlayFocus();
+                    }
+                } else if (e.key === 'Enter') {
+                    if (overlayFocusIndex === 0) btnReplay.click();
+                    else if (overlayFocusIndex === 1 && size < MAX_SIZE) btnNext.click();
+                }
+                return;
+            }
+            if (!isGameActive || isSolving) return;
+            const eIdx = tiles.indexOf(0);
+            const r = Math.floor(eIdx / size), c = eIdx % size;
+            let targetIdx = -1;
+            if (e.ctrlKey) {
+                if (e.key === 'ArrowUp') targetIdx = (size - 1) * size + c;
+                if (e.key === 'ArrowDown') targetIdx = c;
+                if (e.key === 'ArrowLeft') targetIdx = r * size + (size - 1);
+                if (e.key === 'ArrowRight') targetIdx = r * size;
+            } else {
+                if (e.key === 'ArrowUp' && r < size - 1) targetIdx = eIdx + size;
+                if (e.key === 'ArrowDown' && r > 0) targetIdx = eIdx - size;
+                if (e.key === 'ArrowLeft' && c < size - 1) targetIdx = eIdx + 1;
+                if (e.key === 'ArrowRight' && c > 0) targetIdx = eIdx - 1;
+            }
+            if (targetIdx !== -1) handleMove(targetIdx);
+        };
+
+        window.onload = () => { select.value = size; shuffle(); };
+    </script>
+</body>
+</html>
