@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Sliding Puzzle: Smart Navigation</title>
+    <title>Sliding Puzzle: kini Edition</title>
     <style>
         :root {
             --bg-color: #f8fafc;
@@ -14,6 +14,7 @@
             --solve-color: #f59e0b;
             --primary-highlight: #4EA3AC;
             --secondary-highlight: #AAF1ED;
+            --correct-color: #ABBCD2;
             --success-color: #10b981;
             --next-color: #8b5cf6;
             --board-bg: #475569;
@@ -56,8 +57,10 @@
         }
         .tile.empty { background-color: var(--empty-color); box-shadow: none; cursor: default; }
         
+        /* 🎨 상태별 타일 스타일 */
         .tile.highlight-primary { background-color: var(--primary-highlight); color: #ffffff; }
         .tile.highlight-secondary { background-color: var(--secondary-highlight); color: #1e293b; }
+        .tile.correct { background-color: var(--correct-color); color: #ffffff; }
 
         #victory-overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
@@ -109,7 +112,7 @@
         let isGameActive = false;
         let isSolving = false;
         let currentTarget = 1;
-        let eligibleSecondary = []; 
+        let eligibleSecondary = [];
         let overlayFocusIndex = 1;
         const MAX_SIZE = 13;
 
@@ -130,24 +133,16 @@
 
         function updateTargets() {
             if (!isGameActive || isSolving) return;
-            
             while (currentTarget < size * size && tiles[currentTarget - 1] === currentTarget) {
                 currentTarget++;
             }
-
             for (let num = currentTarget + 1; num < size * size; num++) {
                 if (eligibleSecondary[num]) continue;
-
-                const homeIdx = num - 1;
-                const row = Math.floor(homeIdx / size);
-                const col = homeIdx % size;
-
-                const leftOk = (col === 0) || (tiles[homeIdx - 1] === num - 1);
-                const topOk = (row === 0) || (tiles[homeIdx - size] === num - size);
-
-                if (leftOk && topOk) {
-                    eligibleSecondary[num] = true;
-                }
+                const hIdx = num - 1;
+                const r = Math.floor(hIdx / size), c = hIdx % size;
+                const lOk = (c === 0) || (tiles[hIdx - 1] === num - 1);
+                const tOk = (r === 0) || (tiles[hIdx - size] === num - size);
+                if (lOk && tOk) eligibleSecondary[num] = true;
             }
         }
 
@@ -160,13 +155,14 @@
                 const div = document.createElement('div');
                 let hClass = '';
 
+                const isCorrect = (num !== 0 && tiles[idx] === idx + 1);
+
                 if (num === currentTarget && num !== 0) {
                     hClass = ' highlight-primary';
-                } 
-                else if (num !== 0 && eligibleSecondary[num]) {
-                    if (tiles[num - 1] !== num) {
-                        hClass = ' highlight-secondary';
-                    }
+                } else if (num !== 0 && eligibleSecondary[num] && !isCorrect) {
+                    hClass = ' highlight-secondary';
+                } else if (isCorrect) {
+                    hClass = ' correct';
                 }
 
                 div.className = 'tile' + (num === 0 ? ' empty' : '') + hClass;
@@ -203,17 +199,16 @@
             moveHistory = [];
             currentTarget = 1;
             eligibleSecondary = new Array(size * size + 1).fill(false);
-
-            const shuffleCount = Math.pow(size, 3) * 1.5;
-            for (let i = 0; i < shuffleCount; i++) {
-                const eIdx = tiles.indexOf(0);
-                const r = Math.floor(eIdx / size), c = eIdx % size;
-                const moves = [];
-                if (r > 0) moves.push(eIdx - size); if (r < size - 1) moves.push(eIdx + size);
-                if (c > 0) moves.push(eIdx - 1); if (c < size - 1) moves.push(eIdx + 1);
-                const move = moves[Math.floor(Math.random() * moves.length)];
-                [tiles[eIdx], tiles[move]] = [tiles[move], tiles[eIdx]];
-                moveHistory.push(eIdx);
+            const sCount = Math.pow(size, 3) * 1.5;
+            for (let i = 0; i < sCount; i++) {
+                const eI = tiles.indexOf(0);
+                const r = Math.floor(eI / size), c = eI % size;
+                const ms = [];
+                if (r > 0) ms.push(eI - size); if (r < size - 1) ms.push(eI + size);
+                if (c > 0) ms.push(eI - 1); if (c < size - 1) ms.push(eI + 1);
+                const m = ms[Math.floor(Math.random() * ms.length)];
+                [tiles[eI], tiles[m]] = [tiles[m], tiles[eI]];
+                moveHistory.push(eI);
             }
             isGameActive = true;
             updateTargets();
@@ -266,10 +261,7 @@
         document.onkeydown = (e) => {
             if (overlay.style.display === 'flex') {
                 if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-                    if (size < MAX_SIZE) {
-                        overlayFocusIndex = 1 - overlayFocusIndex;
-                        updateOverlayFocus();
-                    }
+                    if (size < MAX_SIZE) { overlayFocusIndex = 1 - overlayFocusIndex; updateOverlayFocus(); }
                 } else if (e.key === 'Enter') {
                     if (overlayFocusIndex === 0) btnReplay.click();
                     else if (overlayFocusIndex === 1 && size < MAX_SIZE) btnNext.click();
@@ -277,21 +269,21 @@
                 return;
             }
             if (!isGameActive || isSolving) return;
-            const eIdx = tiles.indexOf(0);
-            const r = Math.floor(eIdx / size), c = eIdx % size;
-            let targetIdx = -1;
+            const eI = tiles.indexOf(0);
+            const r = Math.floor(eI / size), c = eI % size;
+            let tI = -1;
             if (e.ctrlKey) {
-                if (e.key === 'ArrowUp') targetIdx = (size - 1) * size + c;
-                if (e.key === 'ArrowDown') targetIdx = c;
-                if (e.key === 'ArrowLeft') targetIdx = r * size + (size - 1);
-                if (e.key === 'ArrowRight') targetIdx = r * size;
+                if (e.key === 'ArrowUp') tI = (size - 1) * size + c;
+                if (e.key === 'ArrowDown') tI = c;
+                if (e.key === 'ArrowLeft') tI = r * size + (size - 1);
+                if (e.key === 'ArrowRight') tI = r * size;
             } else {
-                if (e.key === 'ArrowUp' && r < size - 1) targetIdx = eIdx + size;
-                if (e.key === 'ArrowDown' && r > 0) targetIdx = eIdx - size;
-                if (e.key === 'ArrowLeft' && c < size - 1) targetIdx = eIdx + 1;
-                if (e.key === 'ArrowRight' && c > 0) targetIdx = eIdx - 1;
+                if (e.key === 'ArrowUp' && r < size - 1) tI = eI + size;
+                if (e.key === 'ArrowDown' && r > 0) tI = eI - size;
+                if (e.key === 'ArrowLeft' && c < size - 1) tI = eI + 1;
+                if (e.key === 'ArrowRight' && c > 0) tI = eI - 1;
             }
-            if (targetIdx !== -1) handleMove(targetIdx);
+            if (tI !== -1) handleMove(tI);
         };
 
         window.onload = () => { select.value = size; shuffle(); };
